@@ -1,0 +1,25 @@
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+python-multipart>=0.0.18
+pydantic>=2.10.0
+pydantic-settings>=2.7.0
+
+# Document extraction
+marker-pdf>=1.6.0
+python-pptx>=1.0.2
+pdf2image>=1.17.0
+Pillow
+
+# LLM / AI
+google-genai>=1.14.0
+sentence-transformers>=3.4.0
+rank-bm25>=0.2.2
+
+# Vector store
+chromadb>=0.6.3
+
+# Evaluation
+ragas>=0.2.0
+
+# Utilities
+aiofiles>=24.1.0

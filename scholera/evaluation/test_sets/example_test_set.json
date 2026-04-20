@@ -1,0 +1,26 @@
+[
+    {
+        "question": "What is the difference between supervised and unsupervised learning?",
+        "expected_answer": "Supervised learning uses labeled data to train models that map inputs to outputs, while unsupervised learning finds patterns in unlabeled data without predefined outputs.",
+        "source_lecture": null,
+        "difficulty": "easy",
+        "topics": ["machine learning basics"],
+        "type": "factual"
+    },
+    {
+        "question": "How does what we covered in Week 2 relate to the backpropagation lecture?",
+        "expected_answer": "",
+        "source_lecture": null,
+        "difficulty": "hard",
+        "topics": ["neural networks", "optimization"],
+        "type": "cross_lecture"
+    },
+    {
+        "question": "Explain the vanishing gradient problem simply.",
+        "expected_answer": "The vanishing gradient problem occurs when gradients become extremely small as they are propagated back through many layers during training, making it difficult for early layers to learn.",
+        "source_lecture": null,
+        "difficulty": "medium",
+        "topics": ["deep learning", "optimization"],
+        "type": "conceptual"
+    }
+]
