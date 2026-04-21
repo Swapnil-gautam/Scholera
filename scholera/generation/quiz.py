@@ -96,23 +96,49 @@ async def generate_quiz(
     topic: str,
     num_questions: int = 5,
     lecture_number: int | None = None,
+    lecture_numbers: list[int] | None = None,
 ) -> dict:
-    query = topic
-    if lecture_number:
-        query = f"Lecture {lecture_number}: {topic}"
+    nums: list[int] = []
+    for x in lecture_numbers or []:
+        try:
+            v = int(x)
+            if v > 0:
+                nums.append(v)
+        except (TypeError, ValueError):
+            pass
+    nums = sorted(set(nums))
+    if not nums and lecture_number is not None:
+        try:
+            v = int(lecture_number)
+            if v > 0:
+                nums = [v]
+        except (TypeError, ValueError):
+            nums = []
 
-    retrieved = hybrid_retrieve(course_id, query)
+    query = topic
+    if nums:
+        query = f"Lectures {', '.join(str(n) for n in nums)}: {topic}"
+
+    retrieved = hybrid_retrieve(course_id, query, lecture_numbers=nums or None)
     if not retrieved:
         raise ValueError("No relevant course materials found for this topic.")
 
     context = _format_context(retrieved)
     system = _QUIZ_SYSTEM_PROMPT.format(course_title=course_title)
 
+    scope_line = ""
+    if nums:
+        lec = ", ".join(str(n) for n in nums)
+        scope_line = (
+            f"\nIMPORTANT: Base every question ONLY on material from lecture(s) {lec} "
+            "among the sources below. Do not invent facts from other lectures.\n"
+        )
+
     prompt = (
         f"{system}\n\n"
         f"=== COURSE MATERIALS ===\n{context}\n"
         f"=== END MATERIALS ===\n\n"
-        f"Generate exactly {num_questions} multiple-choice questions about: {topic}\n"
+        f"Generate exactly {num_questions} multiple-choice questions about: {topic}.{scope_line}\n"
         f"Return ONLY the JSON array."
     )
 
@@ -130,6 +156,7 @@ async def generate_quiz(
     return {
         "title": f"Quiz: {topic}",
         "topic": topic,
-        "lecture_number": lecture_number,
+        "lecture_number": nums[0] if len(nums) == 1 else None,
+        "lecture_numbers": nums,
         "questions": questions,
     }

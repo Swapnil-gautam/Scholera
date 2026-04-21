@@ -71,6 +71,8 @@ function setupEventListeners() {
   });
   document.getElementById("quiz-form").addEventListener("submit", onGenerateQuiz);
 
+  setupModalDropPanels();
+
   // File drop zone
   const $fileDrop = document.getElementById("file-drop");
   const $fileInput = document.getElementById("file-input");
@@ -521,7 +523,7 @@ async function onGenerateAudioOverview(e) {
   } catch (err) {
     alert("Audio generation failed: " + err.message);
   } finally {
-    btn.textContent = "Generate";
+    btn.textContent = "Generate audio";
     btn.disabled = false;
   }
 }
@@ -574,6 +576,22 @@ async function loadQuizzes() {
   renderQuizzes();
 }
 
+function formatQuizLectureMeta(q) {
+  if (q.lecture_numbers && q.lecture_numbers.length) {
+    return "L" + q.lecture_numbers.join(", L");
+  }
+  if (q.lecture_number) return `L${q.lecture_number}`;
+  return "";
+}
+
+/** Parse "1, 3; 5" into sorted unique positive integers. */
+function parseCommaSeparatedInts(raw) {
+  if (!raw || !String(raw).trim()) return [];
+  const parts = String(raw).split(/[,;\s]+/).map(s => s.trim()).filter(Boolean);
+  const nums = [...new Set(parts.map(p => parseInt(p, 10)).filter(n => !Number.isNaN(n) && n >= 1))];
+  return nums.sort((a, b) => a - b);
+}
+
 function renderQuizzes() {
   if (!state.quizzes.length) {
     $quizzesList.innerHTML = `<p style="font-size:12px;color:var(--text-muted);padding:4px;">No quizzes yet.</p>`;
@@ -581,7 +599,7 @@ function renderQuizzes() {
   }
   const isProfessor = state.role === "professor";
   $quizzesList.innerHTML = state.quizzes.map(q => {
-    const meta = q.lecture_number ? `L${q.lecture_number}` : "";
+    const meta = formatQuizLectureMeta(q);
     const deleteBtn = isProfessor
       ? `<button class="btn-delete-material" onclick="event.stopPropagation(); deleteQuiz('${q.id}')" title="Delete quiz">&times;</button>`
       : "";
@@ -602,7 +620,8 @@ async function onGenerateQuiz(e) {
   const topic = document.getElementById("quiz-topic").value.trim();
   if (!topic) return;
 
-  const lectureNum = document.getElementById("quiz-lecture-num").value || null;
+  const lectureNumsRaw = document.getElementById("quiz-lecture-nums").value;
+  const lecture_numbers = parseCommaSeparatedInts(lectureNumsRaw);
   const numQuestions = parseInt(document.getElementById("quiz-num-questions").value) || 5;
 
   const btn = document.getElementById("btn-quiz-submit");
@@ -610,22 +629,40 @@ async function onGenerateQuiz(e) {
   btn.disabled = true;
 
   try {
-    await api("POST", `/courses/${state.currentCourseId}/quizzes/generate`, {
+    const payload = {
       topic,
       num_questions: numQuestions,
-      lecture_number: lectureNum ? parseInt(lectureNum) : null,
-    });
+    };
+    if (lecture_numbers.length) payload.lecture_numbers = lecture_numbers;
+
+    await api("POST", `/courses/${state.currentCourseId}/quizzes/generate`, payload);
     closeModal("quiz-modal");
     document.getElementById("quiz-topic").value = "";
-    document.getElementById("quiz-lecture-num").value = "";
+    document.getElementById("quiz-lecture-nums").value = "";
     document.getElementById("quiz-num-questions").value = "5";
     await loadQuizzes();
   } catch (err) {
     alert("Quiz generation failed: " + err.message);
   } finally {
-    btn.textContent = "Generate Quiz";
+    btn.textContent = "Generate quiz";
     btn.disabled = false;
   }
+}
+
+/** Click dashed panel (outside textarea) focuses topic field — same affordance as upload drop zone. */
+function setupModalDropPanels() {
+  [
+    ["audio-topic-panel", "audio-topic"],
+    ["quiz-topic-panel", "quiz-topic"],
+  ].forEach(([panelId, fieldId]) => {
+    const panel = document.getElementById(panelId);
+    const field = document.getElementById(fieldId);
+    if (!panel || !field) return;
+    panel.addEventListener("click", (e) => {
+      if (e.target === field) return;
+      field.focus();
+    });
+  });
 }
 
 async function openQuiz(quizId) {
@@ -635,7 +672,8 @@ async function openQuiz(quizId) {
 
     document.getElementById("quiz-take-title").textContent = quiz.title;
     const meta = [];
-    if (quiz.lecture_number) meta.push(`Lecture ${quiz.lecture_number}`);
+    const lecMeta = formatQuizLectureMeta(quiz);
+    if (lecMeta) meta.push(`Scope: ${lecMeta}`);
     if (quiz.topic) meta.push(quiz.topic);
     meta.push(`${quiz.questions.length} questions`);
     document.getElementById("quiz-take-meta").textContent = meta.join(" \u00B7 ");

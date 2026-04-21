@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS quizzes (
     course_id TEXT NOT NULL REFERENCES courses(id),
     title TEXT NOT NULL,
     lecture_number INTEGER,
+    lecture_numbers_json TEXT DEFAULT NULL,
     topic TEXT DEFAULT '',
     num_questions INTEGER DEFAULT 0,
     created_at TEXT NOT NULL
@@ -96,6 +97,20 @@ def _ensure_tables(conn: sqlite3.Connection) -> None:
     ).fetchone()
     if row is None:
         conn.executescript(_SCHEMA)
+    _ensure_quiz_migrations(conn)
+
+
+def _ensure_quiz_migrations(conn: sqlite3.Connection) -> None:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='quizzes' LIMIT 1",
+    ).fetchone()
+    if row is None:
+        return
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(quizzes)").fetchall()}
+    if "lecture_numbers_json" not in cols:
+        conn.execute(
+            "ALTER TABLE quizzes ADD COLUMN lecture_numbers_json TEXT DEFAULT NULL",
+        )
 
 
 def init_db():
@@ -367,15 +382,61 @@ def get_chat_messages(session_id: str) -> list[dict]:
 
 # ---- Quizzes ----
 
-def create_quiz(course_id: str, title: str, lecture_number: int | None = None,
-                topic: str = "", questions: list[dict] | None = None) -> dict:
+def _enrich_quiz_row(d: dict) -> dict:
+    """Add lecture_numbers list for API/UI from JSON + legacy lecture_number."""
+    nums: list[int] = []
+    raw = d.get("lecture_numbers_json")
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                for x in parsed:
+                    try:
+                        v = int(x)
+                        if v > 0:
+                            nums.append(v)
+                    except (TypeError, ValueError):
+                        pass
+                nums = sorted(set(nums))
+        except (json.JSONDecodeError, TypeError, ValueError):
+            nums = []
+    if not nums and d.get("lecture_number") is not None:
+        nums = [int(d["lecture_number"])]
+    d["lecture_numbers"] = nums
+    return d
+
+
+def create_quiz(
+    course_id: str,
+    title: str,
+    lecture_number: int | None = None,
+    topic: str = "",
+    questions: list[dict] | None = None,
+    lecture_numbers: list[int] | None = None,
+) -> dict:
     qid = _new_id()
     now = _now()
+    nums = []
+    for x in lecture_numbers or []:
+        try:
+            v = int(x)
+            if v > 0:
+                nums.append(v)
+        except (TypeError, ValueError):
+            pass
+    nums = sorted(set(nums))
+    ln_db = nums[0] if len(nums) == 1 else None
+    ln_json = json.dumps(nums) if nums else None
+    if not nums and lecture_number is not None:
+        ln_db = int(lecture_number)
+        ln_json = json.dumps([ln_db])
+
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO quizzes (id, course_id, title, lecture_number, topic, num_questions, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (qid, course_id, title, lecture_number, topic, len(questions or []), now),
+            "INSERT INTO quizzes (id, course_id, title, lecture_number, lecture_numbers_json, "
+            "topic, num_questions, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (qid, course_id, title, ln_db, ln_json, topic, len(questions or []), now),
         )
         if questions:
             for i, q in enumerate(questions):
@@ -394,7 +455,8 @@ def create_quiz(course_id: str, title: str, lecture_number: int | None = None,
 def get_quiz(quiz_id: str) -> dict | None:
     with _connect() as conn:
         row = conn.execute("SELECT * FROM quizzes WHERE id = ?", (quiz_id,)).fetchone()
-    return _row_to_dict(row)
+    d = _row_to_dict(row)
+    return _enrich_quiz_row(d) if d else None
 
 
 def list_quizzes(course_id: str) -> list[dict]:
@@ -403,7 +465,7 @@ def list_quizzes(course_id: str) -> list[dict]:
             "SELECT * FROM quizzes WHERE course_id = ? ORDER BY created_at DESC",
             (course_id,),
         ).fetchall()
-    return [_row_to_dict(r) for r in rows]
+    return [_enrich_quiz_row(_row_to_dict(r)) for r in rows]
 
 
 def get_quiz_questions(quiz_id: str) -> list[dict]:

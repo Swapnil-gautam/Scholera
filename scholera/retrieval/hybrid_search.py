@@ -24,7 +24,12 @@ def _get_reranker() -> CrossEncoder:
     return _reranker
 
 
-def hybrid_retrieve(course_id: str, query: str, top_k: int | None = None) -> list[dict]:
+def hybrid_retrieve(
+    course_id: str,
+    query: str,
+    top_k: int | None = None,
+    lecture_numbers: list[int] | None = None,
+) -> list[dict]:
     """
     Full retrieval pipeline:
     1. Parse query for metadata hints
@@ -33,11 +38,30 @@ def hybrid_retrieve(course_id: str, query: str, top_k: int | None = None) -> lis
     4. RRF fusion
     5. Cross-lecture summary injection
     6. Cross-encoder reranking
+
+    When ``lecture_numbers`` is set, retrieval is restricted to those lectures
+    (slides + lecture summaries from those lectures only).
     """
     if top_k is None:
         top_k = settings.rerank_top_k
 
+    lecture_scope: list[int] | None = None
+    if lecture_numbers:
+        scope: list[int] = []
+        for x in lecture_numbers:
+            try:
+                v = int(x)
+                if v > 0:
+                    scope.append(v)
+            except (TypeError, ValueError):
+                pass
+        lecture_scope = sorted(set(scope)) or None
+
     metadata_filter = _parse_query_metadata(query)
+    if lecture_scope:
+        metadata_filter = dict(metadata_filter) if metadata_filter else {}
+        metadata_filter.pop("lecture_number", None)
+        metadata_filter["lecture_numbers"] = lecture_scope
 
     all_chunks = db.get_chunks_for_course(course_id, chunk_type="slide")
     if not all_chunks:
@@ -64,7 +88,12 @@ def hybrid_retrieve(course_id: str, query: str, top_k: int | None = None) -> lis
     if _is_cross_lecture_query(query):
         summaries = db.get_chunks_for_course(course_id, chunk_type="lecture_summary")
         topic_summaries = db.get_chunks_for_course(course_id, chunk_type="topic_summary")
-        for s in summaries + topic_summaries:
+        if lecture_scope:
+            allowed = set(lecture_scope)
+            extra_pool = [s for s in summaries if s.get("lecture_number") in allowed]
+        else:
+            extra_pool = summaries + topic_summaries
+        for s in extra_pool:
             if s["id"] not in {r["id"] for r in fused}:
                 fused.append({"id": s["id"], "text": s["combined_text"],
                               "metadata": s, "score": 0.3})
@@ -164,9 +193,12 @@ def _parse_query_metadata(query: str) -> dict | None:
 
 
 def _filter_chunks(chunks: list[dict], metadata_filter: dict) -> list[dict]:
-    """Filter SQLite chunk rows by metadata (lecture_number, page_number)."""
+    """Filter SQLite chunk rows by metadata (lecture_number(s), page_number)."""
     filtered = chunks
-    if "lecture_number" in metadata_filter:
+    if "lecture_numbers" in metadata_filter:
+        allowed = set(metadata_filter["lecture_numbers"])
+        filtered = [c for c in filtered if c.get("lecture_number") in allowed]
+    elif "lecture_number" in metadata_filter:
         ln = metadata_filter["lecture_number"]
         filtered = [c for c in filtered if c.get("lecture_number") == ln]
     if "page_number" in metadata_filter:
@@ -177,16 +209,22 @@ def _filter_chunks(chunks: list[dict], metadata_filter: dict) -> list[dict]:
 
 def _build_chroma_filter(metadata_filter: dict) -> dict:
     """Convert parsed metadata into a Chroma-compatible where clause."""
-    conditions = []
-    if "lecture_number" in metadata_filter:
-        conditions.append({"lecture_number": metadata_filter["lecture_number"]})
+    parts: list[dict] = []
+    if "lecture_numbers" in metadata_filter:
+        nums = metadata_filter["lecture_numbers"]
+        if len(nums) == 1:
+            parts.append({"lecture_number": nums[0]})
+        else:
+            parts.append({"$or": [{"lecture_number": n} for n in nums]})
+    elif "lecture_number" in metadata_filter:
+        parts.append({"lecture_number": metadata_filter["lecture_number"]})
     if "page_number" in metadata_filter:
-        conditions.append({"page_number": metadata_filter["page_number"]})
+        parts.append({"page_number": metadata_filter["page_number"]})
 
-    if len(conditions) == 1:
-        return conditions[0]
-    if len(conditions) > 1:
-        return {"$and": conditions}
+    if len(parts) == 1:
+        return parts[0]
+    if len(parts) > 1:
+        return {"$and": parts}
     return {}
 
 

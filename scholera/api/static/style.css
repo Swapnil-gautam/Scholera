@@ -583,6 +583,58 @@ select { cursor: pointer; }
 .file-drop .link { color: var(--accent); text-decoration: underline; cursor: pointer; }
 .file-name { margin-top: 8px; color: var(--text-primary); font-weight: 500; }
 
+/* Modal “drop panel” — same visual language as file upload (dashed + accent hover) */
+.modal-drop-panel {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  text-align: left;
+  color: var(--text-muted);
+  cursor: text;
+  transition: border-color 0.2s, background 0.2s;
+}
+.modal-drop-panel:hover,
+.modal-drop-panel:focus-within {
+  border-color: var(--accent);
+  background: var(--accent-light);
+}
+.modal-drop-lede {
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 0 0 12px 0;
+  color: var(--text-secondary);
+}
+.modal-drop-lede .link {
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: none;
+  cursor: default;
+}
+.modal-drop-panel textarea {
+  display: block;
+  width: 100%;
+  min-height: 96px;
+  max-height: 220px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.55;
+  resize: vertical;
+  outline: none;
+}
+.modal-drop-panel textarea::placeholder {
+  color: var(--text-muted);
+}
+.modal-hint-below {
+  margin-top: 8px;
+  margin-bottom: 0;
+}
+
 /* Math rendering */
 .math-block {
   display: block;
