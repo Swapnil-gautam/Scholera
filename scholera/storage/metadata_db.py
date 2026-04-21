@@ -47,6 +47,29 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS quizzes (
+    id TEXT PRIMARY KEY,
+    course_id TEXT NOT NULL REFERENCES courses(id),
+    title TEXT NOT NULL,
+    lecture_number INTEGER,
+    topic TEXT DEFAULT '',
+    num_questions INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS quiz_questions (
+    id TEXT PRIMARY KEY,
+    quiz_id TEXT NOT NULL REFERENCES quizzes(id),
+    question_text TEXT NOT NULL,
+    option_a TEXT NOT NULL,
+    option_b TEXT NOT NULL,
+    option_c TEXT NOT NULL,
+    option_d TEXT NOT NULL,
+    correct_option TEXT NOT NULL,
+    explanation TEXT DEFAULT '',
+    sort_order INTEGER DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS chunks (
     id TEXT PRIMARY KEY,
     course_id TEXT NOT NULL REFERENCES courses(id),
@@ -66,17 +89,36 @@ CREATE TABLE IF NOT EXISTS chunks (
 """
 
 
-def init_db():
-    with _connect() as conn:
+def _ensure_tables(conn: sqlite3.Connection) -> None:
+    """Apply schema if missing (e.g. new empty file after DB was deleted while server ran)."""
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='courses' LIMIT 1",
+    ).fetchone()
+    if row is None:
         conn.executescript(_SCHEMA)
+
+
+def init_db():
+    settings.data_dir.mkdir(parents=True, exist_ok=True)
+    settings.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(settings.sqlite_path))
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        _ensure_tables(conn)
+        conn.commit()
+    finally:
+        conn.close()
 
 
 @contextmanager
 def _connect():
+    settings.data_dir.mkdir(parents=True, exist_ok=True)
+    settings.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(settings.sqlite_path))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
+    _ensure_tables(conn)
     try:
         yield conn
         conn.commit()
@@ -322,6 +364,64 @@ def get_chat_messages(session_id: str) -> list[dict]:
         result.append(d)
     return result
 
+
+# ---- Quizzes ----
+
+def create_quiz(course_id: str, title: str, lecture_number: int | None = None,
+                topic: str = "", questions: list[dict] | None = None) -> dict:
+    qid = _new_id()
+    now = _now()
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO quizzes (id, course_id, title, lecture_number, topic, num_questions, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (qid, course_id, title, lecture_number, topic, len(questions or []), now),
+        )
+        if questions:
+            for i, q in enumerate(questions):
+                conn.execute(
+                    "INSERT INTO quiz_questions "
+                    "(id, quiz_id, question_text, option_a, option_b, option_c, option_d, "
+                    "correct_option, explanation, sort_order) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (_new_id(), qid, q["question_text"], q["option_a"], q["option_b"],
+                     q["option_c"], q["option_d"], q["correct_option"],
+                     q.get("explanation", ""), i),
+                )
+    return get_quiz(qid)
+
+
+def get_quiz(quiz_id: str) -> dict | None:
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM quizzes WHERE id = ?", (quiz_id,)).fetchone()
+    return _row_to_dict(row)
+
+
+def list_quizzes(course_id: str) -> list[dict]:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM quizzes WHERE course_id = ? ORDER BY created_at DESC",
+            (course_id,),
+        ).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def get_quiz_questions(quiz_id: str) -> list[dict]:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM quiz_questions WHERE quiz_id = ? ORDER BY sort_order",
+            (quiz_id,),
+        ).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def delete_quiz(quiz_id: str):
+    with _connect() as conn:
+        conn.execute("DELETE FROM quiz_questions WHERE quiz_id = ?", (quiz_id,))
+        conn.execute("DELETE FROM quizzes WHERE id = ?", (quiz_id,))
+
+
+# ---- Stats ----
 
 def get_course_stats(course_id: str) -> dict:
     with _connect() as conn:

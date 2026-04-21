@@ -4,8 +4,11 @@ const state = {
   currentCourseId: null,
   currentSessionId: null,
   mode: "rag", // "rag" | "raw"
+  role: localStorage.getItem("scholera_role") || "student", // "student" | "professor"
   materials: [],
   sessions: [],
+  quizzes: [],
+  currentQuiz: null,
   sending: false,
 };
 
@@ -24,11 +27,14 @@ const $chatHistory    = document.getElementById("chat-history");
 const $courseStats     = document.getElementById("course-stats");
 const $typingIndicator = document.getElementById("typing-indicator");
 const $modeButtons    = document.querySelectorAll(".mode-btn");
+const $roleButtons    = document.querySelectorAll(".role-btn");
+const $quizzesList    = document.getElementById("quizzes-list");
 
 /* ===== Init ===== */
 document.addEventListener("DOMContentLoaded", async () => {
   await loadCourses();
   setupEventListeners();
+  applyRole(state.role);
 });
 
 function setupEventListeners() {
@@ -41,6 +47,9 @@ function setupEventListeners() {
   $btnCreateCourse.addEventListener("click", () => openModal("course-modal"));
 
   $modeButtons.forEach(btn => btn.addEventListener("click", () => setMode(btn.dataset.mode)));
+  $roleButtons.forEach(btn => btn.addEventListener("click", () => {
+    applyRole(btn.dataset.role);
+  }));
 
   document.getElementById("course-form").addEventListener("submit", onCreateCourse);
   document.getElementById("upload-form").addEventListener("submit", onUploadMaterial);
@@ -55,6 +64,12 @@ function setupEventListeners() {
     openModal("audio-modal");
   });
   document.getElementById("audio-form").addEventListener("submit", onGenerateAudioOverview);
+
+  document.getElementById("btn-create-quiz").addEventListener("click", () => {
+    if (!state.currentCourseId) { alert("Please select a course first."); return; }
+    openModal("quiz-modal");
+  });
+  document.getElementById("quiz-form").addEventListener("submit", onGenerateQuiz);
 
   // File drop zone
   const $fileDrop = document.getElementById("file-drop");
@@ -76,6 +91,23 @@ function setupEventListeners() {
   document.querySelectorAll(".modal-backdrop").forEach(b =>
     b.addEventListener("click", () => b.parentElement.classList.add("hidden"))
   );
+}
+
+/* ===== Role Management ===== */
+function applyRole(role) {
+  state.role = role;
+  localStorage.setItem("scholera_role", role);
+
+  $roleButtons.forEach(b => b.classList.toggle("active", b.dataset.role === role));
+
+  const professorEls = document.querySelectorAll(".professor-only");
+  professorEls.forEach(el => {
+    el.style.display = role === "professor" ? "" : "none";
+  });
+
+  // Re-render materials to show/hide delete buttons
+  renderMaterials();
+  renderQuizzes();
 }
 
 /* ===== API helpers ===== */
@@ -111,7 +143,7 @@ function renderCourseSelect() {
 async function onCourseChange() {
   state.currentCourseId = $courseSelect.value || null;
   state.currentSessionId = null;
-  await Promise.all([loadMaterials(), loadChatHistory(), loadStats()]);
+  await Promise.all([loadMaterials(), loadChatHistory(), loadStats(), loadQuizzes()]);
   clearChatDisplay();
 }
 
@@ -141,6 +173,7 @@ function renderMaterials() {
     $materialsList.innerHTML = `<p style="font-size:12px;color:var(--text-muted);padding:4px;">No materials uploaded yet.</p>`;
     return;
   }
+  const isProfessor = state.role === "professor";
   $materialsList.innerHTML = state.materials.map(m => {
     const rawStatus = m.status || "pending";
     const parts = rawStatus.split("|");
@@ -159,11 +192,15 @@ function renderMaterials() {
       statusHtml = `<span class="status status-${mainStatus}">${mainStatus}</span>`;
     }
 
+    const deleteBtn = isProfessor
+      ? `<button class="btn-delete-material" onclick="deleteMaterial('${m.id}')" title="Delete material">&times;</button>`
+      : "";
+
     return `<div class="material-item">
       <span class="material-name">${m.lecture_number ? `L${m.lecture_number}: ` : ""}${m.lecture_title || m.filename}</span>
       <div class="material-actions">
         ${statusHtml}
-        <button class="btn-delete-material" onclick="deleteMaterial('${m.id}')" title="Delete material">&times;</button>
+        ${deleteBtn}
       </div>
     </div>`;
   }).join("");
@@ -175,11 +212,16 @@ async function onUploadMaterial(e) {
   const fileInput = document.getElementById("file-input");
   if (!fileInput.files.length) { alert("Please select a file."); return; }
 
+  const num = document.getElementById("upload-lecture-num").value;
+  if (!num || parseInt(num) < 1) {
+    alert("Please enter a valid lecture number (must be a positive number).");
+    return;
+  }
+
   const form = new FormData();
   form.append("file", fileInput.files[0]);
-  const num = document.getElementById("upload-lecture-num").value;
+  form.append("lecture_number", num);
   const title = document.getElementById("upload-lecture-title").value;
-  if (num) form.append("lecture_number", num);
   if (title) form.append("lecture_title", title);
 
   const btn = document.getElementById("btn-upload-submit");
@@ -298,7 +340,6 @@ async function onNewChat() {
 function clearChatDisplay() {
   $chatMessages.innerHTML = "";
   $chatMessages.appendChild($welcomeScreen.cloneNode(true) || createWelcome());
-  // re-show welcome
   const ws = $chatMessages.querySelector(".welcome-screen");
   if (ws) ws.classList.remove("hidden");
   renderChatHistory();
@@ -309,11 +350,9 @@ async function onSendMessage(e) {
   const text = $chatInput.value.trim();
   if (!text || state.sending) return;
 
-  // Hide welcome
   const ws = $chatMessages.querySelector(".welcome-screen");
   if (ws) ws.remove();
 
-  // Create session if needed
   if (!state.currentSessionId) {
     const session = await api("POST", "/chat/sessions", {
       course_id: state.currentCourseId,
@@ -325,7 +364,6 @@ async function onSendMessage(e) {
     renderChatHistory();
   }
 
-  // Show user message
   appendMessage("user", text);
   $chatInput.value = "";
   $chatInput.style.height = "auto";
@@ -392,7 +430,6 @@ function appendMessage(role, content, sources = []) {
 /* ===== Input handling ===== */
 function onInputChange() {
   $btnSend.disabled = !$chatInput.value.trim();
-  // Auto-resize
   $chatInput.style.height = "auto";
   $chatInput.style.height = Math.min($chatInput.scrollHeight, 150) + "px";
 }
@@ -404,7 +441,6 @@ function onInputKeydown(e) {
   }
 }
 
-/* Global helper used by welcome screen hints */
 function setInput(text) {
   $chatInput.value = text;
   $chatInput.focus();
@@ -447,7 +483,6 @@ async function onGenerateStudyGuide(e) {
     closeModal("study-modal");
     document.getElementById("study-topic").value = "";
 
-    // Show the study guide as a chat message in a new session
     await onNewChat();
     const ws = $chatMessages.querySelector(".welcome-screen");
     if (ws) ws.remove();
@@ -477,7 +512,6 @@ async function onGenerateAudioOverview(e) {
     closeModal("audio-modal");
     document.getElementById("audio-topic").value = "";
 
-    // Show as a chat message in a new session-like flow (without persisting)
     await onNewChat();
     const ws = $chatMessages.querySelector(".welcome-screen");
     if (ws) ws.remove();
@@ -529,12 +563,163 @@ function appendAudioAssistant(script, sources = [], audioUrl = null) {
   scrollToBottom();
 }
 
+/* ===== Quizzes ===== */
+async function loadQuizzes() {
+  if (!state.currentCourseId) { $quizzesList.innerHTML = ""; return; }
+  try {
+    state.quizzes = await api("GET", `/courses/${state.currentCourseId}/quizzes/`);
+  } catch {
+    state.quizzes = [];
+  }
+  renderQuizzes();
+}
+
+function renderQuizzes() {
+  if (!state.quizzes.length) {
+    $quizzesList.innerHTML = `<p style="font-size:12px;color:var(--text-muted);padding:4px;">No quizzes yet.</p>`;
+    return;
+  }
+  const isProfessor = state.role === "professor";
+  $quizzesList.innerHTML = state.quizzes.map(q => {
+    const meta = q.lecture_number ? `L${q.lecture_number}` : "";
+    const deleteBtn = isProfessor
+      ? `<button class="btn-delete-material" onclick="event.stopPropagation(); deleteQuiz('${q.id}')" title="Delete quiz">&times;</button>`
+      : "";
+    return `<div class="quiz-item" onclick="openQuiz('${q.id}')">
+      <div class="quiz-item-info">
+        <span class="quiz-item-title">${escapeHtml(q.title)}</span>
+        <span class="quiz-item-meta">${meta} ${q.num_questions} questions</span>
+      </div>
+      ${deleteBtn}
+    </div>`;
+  }).join("");
+}
+
+async function onGenerateQuiz(e) {
+  e.preventDefault();
+  if (!state.currentCourseId) return;
+
+  const topic = document.getElementById("quiz-topic").value.trim();
+  if (!topic) return;
+
+  const lectureNum = document.getElementById("quiz-lecture-num").value || null;
+  const numQuestions = parseInt(document.getElementById("quiz-num-questions").value) || 5;
+
+  const btn = document.getElementById("btn-quiz-submit");
+  btn.textContent = "Generating...";
+  btn.disabled = true;
+
+  try {
+    await api("POST", `/courses/${state.currentCourseId}/quizzes/generate`, {
+      topic,
+      num_questions: numQuestions,
+      lecture_number: lectureNum ? parseInt(lectureNum) : null,
+    });
+    closeModal("quiz-modal");
+    document.getElementById("quiz-topic").value = "";
+    document.getElementById("quiz-lecture-num").value = "";
+    document.getElementById("quiz-num-questions").value = "5";
+    await loadQuizzes();
+  } catch (err) {
+    alert("Quiz generation failed: " + err.message);
+  } finally {
+    btn.textContent = "Generate Quiz";
+    btn.disabled = false;
+  }
+}
+
+async function openQuiz(quizId) {
+  try {
+    const quiz = await api("GET", `/courses/${state.currentCourseId}/quizzes/${quizId}`);
+    state.currentQuiz = quiz;
+
+    document.getElementById("quiz-take-title").textContent = quiz.title;
+    const meta = [];
+    if (quiz.lecture_number) meta.push(`Lecture ${quiz.lecture_number}`);
+    if (quiz.topic) meta.push(quiz.topic);
+    meta.push(`${quiz.questions.length} questions`);
+    document.getElementById("quiz-take-meta").textContent = meta.join(" \u00B7 ");
+
+    const body = document.getElementById("quiz-take-body");
+    body.innerHTML = quiz.questions.map((q, i) => `
+      <div class="quiz-question" data-idx="${i}" data-correct="${q.correct_option}">
+        <div class="quiz-q-text"><strong>Q${i + 1}.</strong> ${renderMarkdown(q.question_text)}</div>
+        <div class="quiz-options">
+          ${["A", "B", "C", "D"].map(opt => `
+            <label class="quiz-option" data-opt="${opt}">
+              <input type="radio" name="quiz-q-${i}" value="${opt}">
+              <span class="quiz-option-label">${opt}.</span>
+              <span class="quiz-option-body">${renderMarkdown(q["option_" + opt.toLowerCase()])}</span>
+            </label>
+          `).join("")}
+        </div>
+        <div class="quiz-explanation hidden" id="quiz-exp-${i}">
+          <div class="quiz-explanation-body">${renderMarkdown(q.explanation || "")}</div>
+        </div>
+      </div>
+    `).join("");
+
+    const checkBtn = document.getElementById("btn-quiz-check");
+    checkBtn.textContent = "Check Answers";
+    checkBtn.disabled = false;
+    checkBtn.style.display = "";
+    openModal("quiz-take-modal");
+  } catch (err) {
+    alert("Failed to load quiz: " + err.message);
+  }
+}
+
+function checkQuizAnswers() {
+  if (!state.currentQuiz) return;
+  let correct = 0;
+  const total = state.currentQuiz.questions.length;
+
+  state.currentQuiz.questions.forEach((q, i) => {
+    const questionDiv = document.querySelector(`.quiz-question[data-idx="${i}"]`);
+    const selected = questionDiv.querySelector(`input[name="quiz-q-${i}"]:checked`);
+    const correctOpt = q.correct_option;
+
+    questionDiv.querySelectorAll(".quiz-option").forEach(opt => {
+      opt.classList.remove("quiz-correct", "quiz-wrong");
+      if (opt.dataset.opt === correctOpt) {
+        opt.classList.add("quiz-correct");
+      }
+    });
+
+    if (selected) {
+      const userOpt = selected.value;
+      if (userOpt === correctOpt) {
+        correct++;
+      } else {
+        const wrongLabel = questionDiv.querySelector(`.quiz-option[data-opt="${userOpt}"]`);
+        if (wrongLabel) wrongLabel.classList.add("quiz-wrong");
+      }
+    }
+
+    const expDiv = document.getElementById(`quiz-exp-${i}`);
+    if (expDiv) expDiv.classList.remove("hidden");
+  });
+
+  const checkBtn = document.getElementById("btn-quiz-check");
+  checkBtn.textContent = `Score: ${correct}/${total}`;
+  checkBtn.disabled = true;
+}
+
+async function deleteQuiz(quizId) {
+  if (!confirm("Delete this quiz?")) return;
+  try {
+    await api("DELETE", `/courses/${state.currentCourseId}/quizzes/${quizId}`);
+    await loadQuizzes();
+  } catch (err) {
+    alert("Failed to delete quiz: " + err.message);
+  }
+}
+
+/* ===== Markdown renderer ===== */
 function renderMarkdown(text) {
-  // Protect LaTeX blocks from escaping: extract them first, replace after
   const latexBlocks = [];
   let processed = text;
 
-  // Block LaTeX: $$...$$ or \[...\]
   processed = processed.replace(/\$\$([\s\S]*?)\$\$/g, (_, tex) => {
     latexBlocks.push({ tex: tex.trim(), display: true });
     return `%%LATEX_${latexBlocks.length - 1}%%`;
@@ -544,7 +729,6 @@ function renderMarkdown(text) {
     return `%%LATEX_${latexBlocks.length - 1}%%`;
   });
 
-  // Inline LaTeX: $...$ or \(...\)
   processed = processed.replace(/\$([^\$\n]+?)\$/g, (_, tex) => {
     latexBlocks.push({ tex: tex.trim(), display: false });
     return `%%LATEX_${latexBlocks.length - 1}%%`;
@@ -556,26 +740,18 @@ function renderMarkdown(text) {
 
   let html = escapeHtml(processed);
 
-  // Code blocks
   html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) =>
     `<pre><code>${code.trim()}</code></pre>`
   );
-  // Inline code
   html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
-  // Headers
   html = html.replace(/^### (.+)$/gm, "<h4>$1</h4>");
   html = html.replace(/^## (.+)$/gm, "<h3>$1</h3>");
   html = html.replace(/^# (.+)$/gm, "<h2>$1</h2>");
-  // Bold
   html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-  // Italic
   html = html.replace(/\*(.+?)\*/g, "<em>$1</em>");
-  // Bullet lists
   html = html.replace(/^[\-\*] (.+)$/gm, "<li>$1</li>");
   html = html.replace(/((?:<li>.*<\/li>\s*)+)/g, m => `<ul>${m}</ul>`);
-  // Numbered lists
   html = html.replace(/^\d+\. (.+)$/gm, "<li>$1</li>");
-  // Paragraphs
   html = html.split(/\n{2,}/).map(p => {
     p = p.trim();
     if (!p) return "";
@@ -583,7 +759,6 @@ function renderMarkdown(text) {
     return `<p>${p.replace(/\n/g, "<br>")}</p>`;
   }).join("");
 
-  // Re-inject LaTeX — render with KaTeX if available
   html = html.replace(/%%LATEX_(\d+)%%/g, (_, idx) => {
     const block = latexBlocks[parseInt(idx)];
     if (!block) return "";
@@ -592,7 +767,6 @@ function renderMarkdown(text) {
         return katex.renderToString(block.tex, { displayMode: block.display, throwOnError: false });
       }
     } catch (e) { /* fall through */ }
-    // Fallback: show raw LaTeX in a styled span
     return block.display
       ? `<div class="math-block">${escapeHtml(block.tex)}</div>`
       : `<span class="math-inline">${escapeHtml(block.tex)}</span>`;

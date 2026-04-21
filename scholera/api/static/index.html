@@ -18,6 +18,14 @@
       <h1 class="logo">Scholera <span class="logo-ai">AI</span></h1>
     </div>
 
+    <!-- Role switcher -->
+    <div class="sidebar-section">
+      <div class="role-toggle">
+        <button class="role-btn active" data-role="student">&#x1F393; Student</button>
+        <button class="role-btn" data-role="professor">&#x1F4DA; Professor</button>
+      </div>
+    </div>
+
     <button id="btn-new-chat" class="btn btn-primary full-width">+ New Chat</button>
 
     <!-- Course selector -->
@@ -27,7 +35,7 @@
         <select id="course-select">
           <option value="">-- Select a course --</option>
         </select>
-        <button id="btn-create-course" class="btn btn-icon" title="Create new course">+</button>
+        <button id="btn-create-course" class="btn btn-icon professor-only" title="Create new course">+</button>
       </div>
     </div>
 
@@ -54,11 +62,18 @@
       </button>
     </div>
 
+    <!-- Quizzes -->
+    <div class="sidebar-section">
+      <label class="sidebar-label">Quizzes</label>
+      <div id="quizzes-list" class="quizzes-list"></div>
+      <button id="btn-create-quiz" class="btn btn-secondary full-width professor-only">&#x1F4DD; Create Quiz</button>
+    </div>
+
     <!-- Materials -->
     <div class="sidebar-section">
       <label class="sidebar-label">Course Materials</label>
       <div id="materials-list" class="materials-list"></div>
-      <button id="btn-upload" class="btn btn-secondary full-width">Upload Material</button>
+      <button id="btn-upload" class="btn btn-secondary full-width professor-only">Upload Material</button>
     </div>
 
     <!-- Chat history -->
@@ -117,11 +132,12 @@
           </div>
         </div>
         <div class="form-group">
-          <label>Lecture Number</label>
-          <input type="number" id="upload-lecture-num" min="1" placeholder="e.g. 1">
+          <label>Lecture Number <span style="color:var(--red);">*</span></label>
+          <input type="number" id="upload-lecture-num" min="1" placeholder="e.g. 1" required>
+          <p class="hint-text" style="margin-top:4px;">Required. Enter the lecture number (digits only).</p>
         </div>
         <div class="form-group">
-          <label>Lecture Title <span class="hint-text">(auto-detected or enter manually)</span></label>
+          <label>Lecture Title <span class="hint-text">(optional — auto-detected or enter manually)</span></label>
           <input type="text" id="upload-lecture-title" placeholder="e.g. Introduction to 3D Vision">
         </div>
         <div class="form-actions">
@@ -191,6 +207,51 @@
           <button type="submit" class="btn btn-primary" id="btn-audio-submit">Generate</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- Quiz creation modal (professor) -->
+  <div id="quiz-modal" class="modal hidden">
+    <div class="modal-backdrop"></div>
+    <div class="modal-content">
+      <h3>&#x1F4DD; Create Quiz</h3>
+      <p style="color:var(--text-secondary);font-size:13px;margin-bottom:16px;">
+        Generate a multiple-choice quiz from your course materials. Students will see this quiz when they select this course.
+      </p>
+      <form id="quiz-form">
+        <div class="form-group">
+          <label>Topic</label>
+          <input type="text" id="quiz-topic" placeholder="e.g. Neural Networks and Backpropagation" required>
+        </div>
+        <div class="form-group">
+          <label>Lecture Number <span class="hint-text">(optional — scope to a specific lecture)</span></label>
+          <input type="number" id="quiz-lecture-num" min="1" placeholder="e.g. 3">
+        </div>
+        <div class="form-group">
+          <label>Number of Questions</label>
+          <input type="number" id="quiz-num-questions" min="1" max="20" value="5">
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeModal('quiz-modal')">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="btn-quiz-submit">Generate Quiz</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Quiz-taking modal (student view) -->
+  <div id="quiz-take-modal" class="modal hidden">
+    <div class="modal-backdrop"></div>
+    <div class="modal-content modal-content-wide">
+      <div id="quiz-take-header">
+        <h3 id="quiz-take-title"></h3>
+        <p id="quiz-take-meta" style="color:var(--text-secondary);font-size:13px;margin-bottom:16px;"></p>
+      </div>
+      <div id="quiz-take-body" class="quiz-body"></div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('quiz-take-modal')">Close</button>
+        <button type="button" class="btn btn-primary" id="btn-quiz-check" onclick="checkQuizAnswers()">Check Answers</button>
+      </div>
     </div>
   </div>
 
