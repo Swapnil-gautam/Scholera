@@ -53,6 +53,12 @@ def main():
     create_cmd.add_argument("--title", required=True)
     create_cmd.add_argument("--description", default="")
 
+    # --- reset-db ---
+    sub.add_parser(
+        "reset-db",
+        help="Delete ALL local data stores (SQLite + Chroma + uploads/images/audio)",
+    )
+
     args = parser.parse_args()
     init_db()
 
@@ -68,6 +74,8 @@ def main():
         asyncio.run(_run_evaluate(args))
     elif args.command == "create-course":
         _run_create_course(args)
+    elif args.command == "reset-db":
+        _run_reset_db(args)
 
 
 def _run_server(args):
@@ -198,6 +206,13 @@ def _run_create_course(args):
     from scholera.storage import metadata_db as db
     course = db.create_course(args.title, args.description)
     print(f"Course created: {course['id']} — {course['title']}")
+
+
+def _run_reset_db(args):
+    from scholera.storage.reset_db import reset_all_local_data
+    reset_all_local_data()
+    init_db()
+    print("Local storage cleared (SQLite + Chroma + uploads/images/audio).")
 
 
 if __name__ == "__main__":

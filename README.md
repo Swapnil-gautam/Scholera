@@ -2,8 +2,13 @@
 
 An AI-native backend for a Learning Management System that ingests academic course materials (PDFs, PowerPoints) and powers intelligent features for students and professors — starting with an **AI Tutor** that can answer questions grounded in the full course corpus.
 
+## Demo
+
+- [Demo video (`Demo_video.mp4`)](Demo_video.mp4)
+
 ## Table of Contents
 
+- [Demo](#demo)
 - [Architecture Overview](#architecture-overview)
 - [How It Works](#how-it-works)
   - [Ingestion Pipeline](#ingestion-pipeline)
@@ -40,20 +45,22 @@ An AI-native backend for a Learning Management System that ingests academic cour
                          │  6. Embedding + Indexing                 │
                          └──────────┬───────────────────────────────┘
                                     │
-                    ┌───────────────┼───────────────┐
-                    ▼               ▼               ▼
-             ┌──────────┐   ┌──────────┐   ┌──────────────┐
-             │ ChromaDB │   │  BM25    │   │   SQLite     │
-             │ (vectors)│   │  Index   │   │  (metadata)  │
-             └──────────┘   └──────────┘   └──────────────┘
-                    │               │               │
-                    └───────────────┼───────────────┘
+                    ┌───────────────────────────────┐
+                    ▼                               ▼
+             ┌──────────┐                   ┌──────────────┐
+             │ ChromaDB │                   │   SQLite     │
+             │ (vectors)│                   │ (chunks +    │
+             └──────────┘                   │  metadata +  │
+                    │                       │  quizzes)    │
+                    └───────────────┼───────└──────────────┘
                                     ▼
+                               
                          ┌────────────────────┐
     ┌──────────┐         │  RETRIEVAL LAYER   │
     │ Student  │────────▸│                    │
-    │ Question │         │  Hybrid Search     │
+    │ Prompt   │         │  Hybrid Search     │
     └──────────┘         │  (BM25 + Vector)   │
+                         │  BM25 Scoring      │
                          │  RRF Fusion        │
                          │  Cross-Encoder     │
                          │  Reranking         │
@@ -66,10 +73,12 @@ An AI-native backend for a Learning Management System that ingests academic cour
                          │  + Grounded Prompt │
                          │  + Source Citations │
                          └────────┬───────────┘
-                                  ▼
-                         ┌────────────────────┐
-                         │  Answer + Sources  │
-                         └────────────────────┘
+                ┌─────────────────┼──────────────────┐
+                ▼                 ▼                  ▼
+       ┌────────────────┐  ┌────────────────┐  ┌────────────────┐
+       │ Tutor Answer   │  │ Quiz JSON      │  │ Audio Overview │
+       │ + Sources      │  │ (saved in DB)  │  │ (TTS file)     │
+       └────────────────┘  └────────────────┘  └────────────────┘
 ```
 
 ---
@@ -112,7 +121,7 @@ These summaries are embedded and stored as retrievable chunks, enabling the syst
 **6. Embedding & Indexing**
 All chunks (slides + summaries) are:
 - Embedded with `all-MiniLM-L6-v2` (384-dimensional, runs locally) and stored in ChromaDB
-- Indexed with BM25 (tokenized text) for keyword matching
+- Scored with BM25 (tokenized text) for keyword matching (a ranking function over text, not a database)
 
 When a professor uploads their 8th PDF, only that document is processed through stages 1-4. The system then incrementally updates the lecture summary for that lecture and regenerates topic summaries across all lectures. Existing chunks from earlier uploads are untouched.
 

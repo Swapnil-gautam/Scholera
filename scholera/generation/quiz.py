@@ -34,7 +34,11 @@ _QUIZ_SYSTEM_PROMPT = (
     "- Questions should range from conceptual understanding to application.\n"
     "- Do NOT create trivial or trick questions.\n"
     "- Use LaTeX notation for mathematical expressions if needed.\n\n"
-    "You MUST respond with valid JSON only — no markdown, no code fences.\n"
+    "CRITICAL JSON RULES:\n"
+    "- Respond with valid JSON only — no markdown, no code fences, no trailing commas.\n"
+    "- Every backslash in strings MUST be doubled: write \\\\frac not \\frac.\n"
+    "- Do not use unescaped newlines inside string values.\n"
+    "- Do not include any text before or after the JSON array.\n\n"
     "Return a JSON array of question objects with this exact schema:\n"
     "[\n"
     '  {{\n'
@@ -69,14 +73,39 @@ def _format_context(retrieved: list[dict]) -> str:
     return "\n\n".join(parts)
 
 
+def _sanitize_json(text: str) -> str:
+    """Best-effort fixes for common LLM JSON issues."""
+    text = re.sub(r",\s*([}\]])", r"\1", text)
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text)
+    text = re.sub(
+        r'(?<=: ")((?:[^"\\]|\\.)*)(?=")',
+        lambda m: m.group(0).replace("\n", "\\n"),
+        text,
+    )
+    return text
+
+
 def _parse_questions(raw_text: str) -> list[dict]:
-    """Extract the JSON array from Gemini's response, tolerating markdown fences."""
+    """Extract the JSON array from Gemini's response, tolerating common issues."""
     text = raw_text.strip()
     fence_match = re.search(r"```(?:json)?\s*\n?([\s\S]*?)```", text)
     if fence_match:
         text = fence_match.group(1).strip()
 
-    questions = json.loads(text)
+    text = _sanitize_json(text)
+
+    try:
+        questions = json.loads(text)
+    except json.JSONDecodeError:
+        array_match = re.search(r"\[[\s\S]*\]", text)
+        if array_match:
+            try:
+                questions = json.loads(_sanitize_json(array_match.group()))
+            except json.JSONDecodeError:
+                questions = _extract_objects_individually(text)
+        else:
+            questions = _extract_objects_individually(text)
+
     if not isinstance(questions, list):
         raise ValueError("Expected a JSON array of questions")
 
@@ -88,6 +117,30 @@ def _parse_questions(raw_text: str) -> list[dict]:
             if q["correct_option"] in ("A", "B", "C", "D"):
                 valid.append(q)
     return valid
+
+
+def _extract_objects_individually(text: str) -> list[dict]:
+    """Fallback: pull out each {...} object and parse them one at a time."""
+    results: list[dict] = []
+    depth = 0
+    start = -1
+    for i, ch in enumerate(text):
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0 and start >= 0:
+                fragment = text[start : i + 1]
+                try:
+                    obj = json.loads(_sanitize_json(fragment))
+                    if isinstance(obj, dict):
+                        results.append(obj)
+                except json.JSONDecodeError:
+                    pass
+                start = -1
+    return results
 
 
 async def generate_quiz(
@@ -134,23 +187,38 @@ async def generate_quiz(
             "among the sources below. Do not invent facts from other lectures.\n"
         )
 
-    prompt = (
-        f"{system}\n\n"
-        f"=== COURSE MATERIALS ===\n{context}\n"
-        f"=== END MATERIALS ===\n\n"
-        f"Generate exactly {num_questions} multiple-choice questions about: {topic}.{scope_line}\n"
-        f"Return ONLY the JSON array."
-    )
-
     client = _get_client()
-    response = client.models.generate_content(
-        model=settings.gemini_model,
-        contents=prompt,
-    )
+    all_questions: list[dict] = []
+    remaining = num_questions
+    max_attempts = 3
 
-    raw = response.text or ""
-    questions = _parse_questions(raw)
-    if not questions:
+    for attempt in range(max_attempts):
+        prompt = (
+            f"{system}\n\n"
+            f"=== COURSE MATERIALS ===\n{context}\n"
+            f"=== END MATERIALS ===\n\n"
+            f"Generate exactly {remaining} multiple-choice questions about: {topic}.{scope_line}\n"
+            f"Return ONLY the JSON array."
+        )
+
+        response = client.models.generate_content(
+            model=settings.gemini_model,
+            contents=prompt,
+        )
+
+        raw = response.text or ""
+        batch = _parse_questions(raw)
+        logger.info(
+            "Quiz attempt %d: requested %d, parsed %d valid",
+            attempt + 1, remaining, len(batch),
+        )
+        all_questions.extend(batch)
+
+        if len(all_questions) >= num_questions:
+            break
+        remaining = num_questions - len(all_questions)
+
+    if not all_questions:
         raise ValueError("Failed to generate valid quiz questions. Please try again.")
 
     return {
@@ -158,5 +226,5 @@ async def generate_quiz(
         "topic": topic,
         "lecture_number": nums[0] if len(nums) == 1 else None,
         "lecture_numbers": nums,
-        "questions": questions,
+        "questions": all_questions[:num_questions],
     }
