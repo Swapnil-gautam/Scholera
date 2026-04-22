@@ -1,4 +1,4 @@
-# Scholera AI Backend
+# Scholera AI 
 
 An AI-native backend that ingests course materials (PDF/PPTX) and powers a **RAG Tutor** grounded in those lectures.
 
