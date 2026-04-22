@@ -4,7 +4,9 @@ An AI-native backend for a Learning Management System that ingests academic cour
 
 ## Demo
 
-- [Demo video (`Demo_video.mp4`)](Demo_video.mp4)
+<video src="Demo_video.mp4" controls muted playsinline style="max-width: 100%;"></video>
+
+- [Download demo video (`Demo_video.mp4`)](Demo_video.mp4)
 
 ## Table of Contents
 
